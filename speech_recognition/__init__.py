@@ -571,7 +571,7 @@ class Recognizer(AudioSource):
             target_energy = energy * self.dynamic_energy_ratio
             self.energy_threshold = self.energy_threshold * damping + target_energy * (1 - damping)
 
-    def snowboy_wait_for_hot_word(self, snowboy_location, snowboy_hot_word_files, source, timeout=None):
+    def snowboy_wait_for_hot_word(self, snowboy_location, snowboy_hot_word_files, hot_word_callback, source, timeout=None):
         # load snowboy library (NOT THREAD SAFE)
         sys.path.append(snowboy_location)
         import snowboydetect
@@ -609,7 +609,9 @@ class Recognizer(AudioSource):
             # run Snowboy on the resampled audio
             snowboy_result = detector.RunDetection(b"".join(resampled_frames))
             assert snowboy_result != -1, "Error initializing streams or reading audio data"
-            if snowboy_result > 0: break  # wake word found
+            if snowboy_result > 0:
+                hot_word_callback() # wake word found, call back
+                break
 
         return b"".join(frames), elapsed_time
 
@@ -623,7 +625,7 @@ class Recognizer(AudioSource):
 
         The ``phrase_time_limit`` parameter is the maximum number of seconds that this will allow a phrase to continue before stopping and returning the part of the phrase processed before the time limit was reached. The resulting audio will be the phrase cut off at the time limit. If ``phrase_timeout`` is ``None``, there will be no phrase time limit.
 
-        The ``snowboy_configuration`` parameter allows integration with `Snowboy <https://snowboy.kitt.ai/>`__, an offline, high-accuracy, power-efficient hotword recognition engine. When used, this function will pause until Snowboy detects a hotword, after which it will unpause. This parameter should either be ``None`` to turn off Snowboy support, or a tuple of the form ``(SNOWBOY_LOCATION, LIST_OF_HOT_WORD_FILES)``, where ``SNOWBOY_LOCATION`` is the path to the Snowboy root directory, and ``LIST_OF_HOT_WORD_FILES`` is a list of paths to Snowboy hotword configuration files (`*.pmdl` or `*.umdl` format).
+        The ``snowboy_configuration`` parameter allows integration with `Snowboy <https://snowboy.kitt.ai/>`__, an offline, high-accuracy, power-efficient hotword recognition engine. When used, this function will pause until Snowboy detects a hotword, after which it will unpause. This parameter should either be ``None`` to turn off Snowboy support, or a tuple of the form ``(SNOWBOY_LOCATION, LIST_OF_HOT_WORD_FILES, CALLBACK)``, where ``SNOWBOY_LOCATION`` is the path to the Snowboy root directory, ``LIST_OF_HOT_WORD_FILES`` is a list of paths to Snowboy hotword configuration files (`*.pmdl` or `*.umdl` format), and ``CALLBACK`` is a function to be called when a hotword is detected.
 
         This operation will always complete within ``timeout + phrase_timeout`` seconds if both are numbers, either by returning the audio data, or by raising a ``speech_recognition.WaitTimeoutError`` exception.
         """
@@ -671,8 +673,8 @@ class Recognizer(AudioSource):
                         self.energy_threshold = self.energy_threshold * damping + target_energy * (1 - damping)
             else:
                 # read audio input until the hotword is said
-                snowboy_location, snowboy_hot_word_files = snowboy_configuration
-                buffer, delta_time = self.snowboy_wait_for_hot_word(snowboy_location, snowboy_hot_word_files, source, timeout)
+                snowboy_location, snowboy_hot_word_files, hot_word_callback = snowboy_configuration
+                buffer, delta_time = self.snowboy_wait_for_hot_word(snowboy_location, snowboy_hot_word_files, hot_word_callback, source, timeout)
                 elapsed_time += delta_time
                 if len(buffer) == 0: break  # reached end of the stream
                 frames.append(buffer)
