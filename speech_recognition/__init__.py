@@ -645,10 +645,11 @@ class Recognizer(AudioSource):
         # read audio input for phrases until there is a phrase that is long enough
         elapsed_time = 0  # number of seconds of audio read
         buffer = b""  # an empty buffer means that the stream has ended and there is no data left to read
+        heard_hotword = False        
         while True:
             frames = collections.deque()
 
-            if snowboy_configuration is None:
+            if heard_hotword or snowboy_configuration is None:
                 # store audio input until the phrase starts
                 while True:
                     # handle waiting too long for phrase by raising an exception
@@ -657,6 +658,7 @@ class Recognizer(AudioSource):
                         raise WaitTimeoutError("listening timed out while waiting for phrase to start")
 
                     buffer = source.stream.read(source.CHUNK)
+
                     if len(buffer) == 0: break  # reached end of the stream
                     frames.append(buffer)
                     if len(frames) > non_speaking_buffer_count:  # ensure we only keep the needed amount of non-speaking buffers
@@ -675,13 +677,14 @@ class Recognizer(AudioSource):
                 # read audio input until the hotword is said
                 snowboy_location, snowboy_hot_word_files, hot_word_callback = snowboy_configuration
                 buffer, delta_time = self.snowboy_wait_for_hot_word(snowboy_location, snowboy_hot_word_files, hot_word_callback, source, timeout)
-                elapsed_time += delta_time
+                heard_hotword = True
+                # RYAN COMMENTED OUT elapsed_time += delta_time
                 if len(buffer) == 0: break  # reached end of the stream
                 frames.append(buffer)
 
             # read audio input until the phrase ends
             pause_count, phrase_count = 0, 0
-            phrase_start_time = elapsed_time
+            phrase_start_time = 0 # RYAN EDIT - elapsed_time
             while True:
                 # handle phrase being too long by cutting off the audio
                 elapsed_time += seconds_per_buffer
@@ -689,6 +692,7 @@ class Recognizer(AudioSource):
                     break
 
                 buffer = source.stream.read(source.CHUNK)
+
                 if len(buffer) == 0: break  # reached end of the stream
                 frames.append(buffer)
                 phrase_count += 1
