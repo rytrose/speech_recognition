@@ -5,6 +5,11 @@
 import io
 import os
 import sys
+
+# RYAN EDIT
+sys.path.insert(1, os.path.join(sys.path[0], '../../..'))
+from wakeword.doa import DOA
+
 import subprocess
 import wave
 import aifc
@@ -592,12 +597,13 @@ class Recognizer(AudioSource):
         # buffers capable of holding 5 seconds of original and resampled audio
         five_seconds_buffer_count = int(math.ceil(5 / seconds_per_buffer))
         frames = collections.deque(maxlen=five_seconds_buffer_count)
-        resampled_frames = collections.deque(maxlen=five_seconds_buffer_count)
+        resampled_frames = collections.deque(maxlen=int(five_seconds_buffer_count * 0.4))
         while True:
             elapsed_time += seconds_per_buffer
             if timeout and elapsed_time > timeout:
                 raise WaitTimeoutError("listening timed out while waiting for hotword to be said")
 
+            #print("listening for hotword")
             buffer = source.stream.read(source.CHUNK)
             if len(buffer) == 0: break  # reached end of the stream
             frames.append(buffer)
@@ -606,6 +612,7 @@ class Recognizer(AudioSource):
             resampled_buffer, resampling_state = audioop.ratecv(buffer, source.SAMPLE_WIDTH, 1, source.SAMPLE_RATE, snowboy_sample_rate, resampling_state)
             resampled_frames.append(resampled_buffer)
 
+            #print("checking snowboy for hotword")
             # run Snowboy on the resampled audio
             snowboy_result = detector.RunDetection(b"".join(resampled_frames))
             assert snowboy_result != -1, "Error initializing streams or reading audio data"
@@ -615,7 +622,7 @@ class Recognizer(AudioSource):
 
         return b"".join(frames), elapsed_time
 
-    def listen(self, source, timeout=None, phrase_time_limit=None, snowboy_configuration=None):
+    def listen(self, source, timeout=None, phrase_time_limit=None, snowboy_configuration=None, use_doa=False):
         """
         Records a single phrase from ``source`` (an ``AudioSource`` instance) into an ``AudioData`` instance, which it returns.
 
@@ -645,7 +652,9 @@ class Recognizer(AudioSource):
         # read audio input for phrases until there is a phrase that is long enough
         elapsed_time = 0  # number of seconds of audio read
         buffer = b""  # an empty buffer means that the stream has ended and there is no data left to read
-        heard_hotword = False        
+        heard_hotword = False
+        doa_measures = []
+        doa = None
         while True:
             frames = collections.deque()
 
@@ -673,6 +682,7 @@ class Recognizer(AudioSource):
                         damping = self.dynamic_energy_adjustment_damping ** seconds_per_buffer  # account for different chunk sizes and rates
                         target_energy = energy * self.dynamic_energy_ratio
                         self.energy_threshold = self.energy_threshold * damping + target_energy * (1 - damping)
+
             else:
                 # read audio input until the hotword is said
                 snowboy_location, snowboy_hot_word_files, hot_word_callback = snowboy_configuration
@@ -685,6 +695,9 @@ class Recognizer(AudioSource):
             # read audio input until the phrase ends
             pause_count, phrase_count = 0, 0
             phrase_start_time = 0 # RYAN EDIT - elapsed_time
+            
+            if not doa and use_doa:
+                doa = DOA()
             while True:
                 # handle phrase being too long by cutting off the audio
                 elapsed_time += seconds_per_buffer
@@ -706,15 +719,19 @@ class Recognizer(AudioSource):
                 if pause_count > pause_buffer_count:  # end of the phrase
                     break
 
+                if doa: # RYAN EDIT
+                    doa_measures.append(doa.doa)
             # check how long the detected phrase is, and retry listening if the phrase is too short
             phrase_count -= pause_count  # exclude the buffers for the pause before the phrase
             if phrase_count >= phrase_buffer_count or len(buffer) == 0: break  # phrase is long enough or we've reached the end of the stream, so stop listening
 
+        if doa:
+            doa.stop()
         # obtain frame data
         for i in range(pause_count - non_speaking_buffer_count): frames.pop()  # remove extra non-speaking frames at the end
         frame_data = b"".join(frames)
 
-        return AudioData(frame_data, source.SAMPLE_RATE, source.SAMPLE_WIDTH)
+        return AudioData(frame_data, source.SAMPLE_RATE, source.SAMPLE_WIDTH), doa_measures
 
     def listen_in_background(self, source, callback, phrase_time_limit=None):
         """
